@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>拉手替换工具</title>
+<style>
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
+  .col { flex: 1; min-width: 280px; }
+  canvas { border: 1px solid #ccc; max-width: 100%; cursor: crosshair; }
+  img.preview { max-width: 100%; border: 1px solid #ccc; }
+  button { padding: 10px 18px; font-size: 14px; cursor: pointer; border-radius: 6px; border: 1px solid #888; background: #f5f5f5; }
+  button:hover { background: #eee; }
+  #result { margin-top: 20px; }
+  .hint { color: #888; font-size: 13px; }
+  select, input[type=text] { padding: 6px; }
+  label { font-weight: bold; display: block; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<h1>柜门拉手替换工具</h1>
+<p class="hint">1) 上传原始柜门照片 → 2) 在图上拖拽画框圈选旧拉手位置 → 3) 上传想换上去的新拉手图片 → 4) 点击"生成替换效果"</p>
+
+<div class="row">
+  <div class="col">
+    <label>原始照片（在下方画框圈选旧拉手）</label>
+    <input type="file" id="origFile" accept="image/*" />
+    <canvas id="canvas"></canvas>
+    <p class="hint">按住鼠标左键拖拽即可画出选框，可重新画覆盖上一次的选框。</p>
+  </div>
+  <div class="col">
+    <label>新拉手图片</label>
+    <input type="file" id="newHandleFile" accept="image/*" />
+    <img id="newHandlePreview" class="preview" />
+  </div>
+</div>
+
+<div class="row">
+  <div class="col">
+    <label>使用的 AI 引擎</label>
+    <select id="engine">
+      <option value="openai">OpenAI gpt-image-1（蒙版精确编辑，推荐）</option>
+      <option value="gemini">Gemini 2.5 Flash Image（多图对话式编辑）</option>
+    </select>
+  </div>
+  <div class="col">
+    <label>补充说明（可选，例如新拉手材质/颜色/风格）</label>
+    <input type="text" id="extraPrompt" placeholder="例如：新拉手为拉丝黑色金属长条把手" style="width:100%;" />
+  </div>
+</div>
+
+<button id="submitBtn">生成替换效果</button>
+<p id="status" class="hint"></p>
+
+<div id="result"></div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let origImage = null;
+let origFileObj = null;
+let newHandleFileObj = null;
+let selRect = null; // {x,y,w,h} in canvas pixel coords (== original image pixel coords)
+
+document.getElementById('origFile').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  origFileObj = file;
+  const img = new Image();
+  img.onload = () => {
+    origImage = img;
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    selRect = null;
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+document.getElementById('newHandleFile').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  newHandleFileObj = file;
+  document.getElementById('newHandlePreview').src = URL.createObjectURL(file);
+});
+
+let dragging = false, startX = 0, startY = 0;
+
+canvas.addEventListener('mousedown', (e) => {
+  if (!origImage) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  startX = (e.clientX - rect.left) * scaleX;
+  startY = (e.clientY - rect.top) * scaleY;
+  dragging = true;
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!dragging || !origImage) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const curX = (e.clientX - rect.left) * scaleX;
+  const curY = (e.clientY - rect.top) * scaleY;
+
+  ctx.drawImage(origImage, 0, 0);
+  ctx.strokeStyle = 'red';
+  ctx.lineWidth = Math.max(2, canvas.width / 300);
+  const x = Math.min(startX, curX), y = Math.min(startY, curY);
+  const w = Math.abs(curX - startX), h = Math.abs(curY - startY);
+  ctx.strokeRect(x, y, w, h);
+  selRect = { x, y, w, h };
+});
+
+canvas.addEventListener('mouseup', () => { dragging = false; });
+
+function buildMaskDataURL() {
+  // Mask: opaque (black, alpha=255) everywhere EXCEPT the selected rect,
+  // which is fully transparent (alpha=0) -> that is the region the AI will repaint.
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = canvas.width;
+  maskCanvas.height = canvas.height;
+  const mctx = maskCanvas.getContext('2d');
+  mctx.fillStyle = 'rgba(0,0,0,255)';
+  mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+  if (selRect) {
+    mctx.clearRect(selRect.x, selRect.y, selRect.w, selRect.h);
+  }
+  return maskCanvas.toDataURL('image/png');
+}
+
+function dataURLtoBlob(dataURL) {
+  const [header, base64] = dataURL.split(',');
+  const mime = header.match(/:(.*?);/)[1];
+  const binary = atob(base64);
+  const arr = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+document.getElementById('submitBtn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('status');
+  const resultEl = document.getElementById('result');
+  resultEl.innerHTML = '';
+
+  if (!origFileObj) { statusEl.textContent = '请先上传原始照片。'; return; }
+  if (!newHandleFileObj) { statusEl.textContent = '请上传新拉手图片。'; return; }
+  if (!selRect) { statusEl.textContent = '请在原图上画框圈出旧拉手位置。'; return; }
+
+  const engine = document.getElementById('engine').value;
+  const extraPrompt = document.getElementById('extraPrompt').value;
+
+  const formData = new FormData();
+  formData.append('original_image', origFileObj);
+  formData.append('new_handle_image', newHandleFileObj);
+  formData.append('extra_prompt', extraPrompt);
+
+  if (engine === 'openai') {
+    const maskBlob = dataURLtoBlob(buildMaskDataURL());
+    formData.append('mask', maskBlob, 'mask.png');
+  }
+
+  const endpoint = engine === 'openai' ? '/swap-handle-openai' : '/swap-handle-gemini';
+
+  statusEl.textContent = '正在生成，请稍候（可能需要 10-30 秒）...';
+  try {
+    const resp = await fetch(endpoint, { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(errText);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    resultEl.innerHTML = '<label>替换效果</label><img class="preview" src="' + url + '" />';
+    statusEl.textContent = '完成。';
+  } catch (err) {
+    statusEl.textContent = '出错了：' + err.message;
+  }
+});
+</script>
+
+</body>
+</html>
