@@ -661,11 +661,10 @@ const state = {
   dragCurrent: { x: 0, y: 0 },
 };
 
-const API_BASE = typeof __PORT_5000__ !== 'undefined'
-  ? __PORT_5000__
-  : (window.location.origin.includes('pplx.app')
-    ? window.location.origin
-    : 'http://localhost:5000');
+const PORT_PROXY = '__PORT_5000__';
+const API_BASE = PORT_PROXY.startsWith('__PORT_')
+  ? 'http://localhost:5000'
+  : PORT_PROXY;
 
 // ============================================================================
 // DOM 引用
