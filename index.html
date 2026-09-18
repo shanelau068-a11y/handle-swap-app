@@ -2,185 +2,1033 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<title>拉手替换工具</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>拉手换装 AI — 柜门拉手智能替换工具</title>
 <style>
-  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; color: #222; }
-  h1 { font-size: 20px; }
-  .row { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
-  .col { flex: 1; min-width: 280px; }
-  canvas { border: 1px solid #ccc; max-width: 100%; cursor: crosshair; }
-  img.preview { max-width: 100%; border: 1px solid #ccc; }
-  button { padding: 10px 18px; font-size: 14px; cursor: pointer; border-radius: 6px; border: 1px solid #888; background: #f5f5f5; }
-  button:hover { background: #eee; }
-  #result { margin-top: 20px; }
-  .hint { color: #888; font-size: 13px; }
-  select, input[type=text] { padding: 6px; }
-  label { font-weight: bold; display: block; margin-bottom: 6px; }
+  :root {
+    /* 工业风暖灰色调 + 钢蓝强调色 */
+    --bg: #f0eeea;
+    --surface: #ffffff;
+    --surface-2: #f7f6f3;
+    --surface-offset: #e8e6e1;
+    --border: #d4d1ca;
+    --divider: #e0ddd7;
+    --text: #1a1916;
+    --text-muted: #6b6963;
+    --text-faint: #a8a6a0;
+    --primary: #2d5f7a;
+    --primary-hover: #244e64;
+    --primary-light: #e8f0f4;
+    --accent: #c47b3a;
+    --danger: #b84c3e;
+    --success: #3a7d2c;
+    --radius: 8px;
+    --radius-sm: 4px;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+    --font-body: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 顶栏 ===== */
+  .topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow-sm);
+  }
+  .topbar .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .topbar .brand svg { flex-shrink: 0; }
+  .topbar .brand-sub {
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+  .topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* ===== 布局 ===== */
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr 280px;
+    gap: 1px;
+    background: var(--border);
+    min-height: calc(100vh - 56px);
+  }
+  .panel {
+    background: var(--surface);
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .panel-center {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-2);
+  }
+
+  /* ===== 通用组件 ===== */
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .section-title .count-badge {
+    background: var(--primary);
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 12px;
+    background: var(--surface-2);
+  }
+  .upload-zone:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+  }
+  .upload-zone.has-file {
+    border-style: solid;
+    border-color: var(--success);
+    background: #f0f8ec;
+  }
+  .upload-zone .icon { font-size: 24px; margin-bottom: 6px; }
+  .upload-zone .label { font-weight: 600; font-size: 13px; }
+  .upload-zone .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .upload-preview {
+    margin-top: 8px;
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+  }
+
+  .control-group { margin-bottom: 16px; }
+  .control-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .control-label .value {
+    font-weight: 400;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    -webkit-appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-offset);
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: var(--shadow-sm);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: 2px solid #fff;
+  }
+
+  select, input[type="text"], input[type="number"] {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text);
+  }
+  select:focus, input:focus { outline: 2px solid var(--primary); outline-offset: 0; border-color: var(--primary); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .btn-primary {
+    background: var(--primary);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-primary:disabled { background: var(--text-faint); cursor: not-allowed; }
+  .btn-secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .btn-secondary:hover { background: var(--surface-offset); }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    padding: 4px 8px;
+  }
+  .btn-ghost:hover { color: var(--text); background: var(--surface-offset); }
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border-color: var(--danger);
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+
+  .btn-block { width: 100%; }
+  .btn-lg { padding: 12px 20px; font-size: 15px; }
+
+  /* ===== 选区列表 ===== */
+  .box-list { display: flex; flex-direction: column; gap: 6px; }
+  .box-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .box-item:hover { border-color: var(--primary); }
+  .box-item.active {
+    border-color: var(--primary);
+    background: var(--primary-light);
+  }
+  .box-item .box-num {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .box-item .box-info { flex: 1; color: var(--text-muted); }
+  .box-item .box-info strong { color: var(--text); }
+  .box-item .box-del {
+    color: var(--danger);
+    cursor: pointer;
+    padding: 2px;
+    font-size: 16px;
+    line-height: 1;
+    border: none;
+    background: none;
+  }
+  .box-item .box-del:hover { opacity: 0.7; }
+
+  .empty-state {
+    text-align: center;
+    padding: 24px 12px;
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+
+  /* ===== 画布区域 ===== */
+  .canvas-wrapper {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .canvas-container {
+    position: relative;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-md);
+    background: #fff;
+  }
+  #mainCanvas {
+    display: block;
+    cursor: crosshair;
+    max-width: 100%;
+    max-height: calc(100vh - 200px);
+  }
+  #overlayCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+  }
+  .canvas-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint);
+    padding: 60px 24px;
+    text-align: center;
+  }
+  .canvas-empty svg { margin-bottom: 12px; opacity: 0.4; }
+  .canvas-empty p { font-size: 13px; }
+
+  .canvas-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    min-height: 40px;
+  }
+  .canvas-toolbar .toolbar-left { display: flex; gap: 6px; align-items: center; }
+  .canvas-toolbar .toolbar-info {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ===== 结果预览 ===== */
+  .result-area {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    display: none;
+  }
+  .result-area.show { display: block; }
+  .result-area .result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .result-area .result-title { font-weight: 700; font-size: 14px; }
+  .result-area img {
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* ===== 开关 ===== */
+  .switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    user-select: none;
+  }
+  .switch input { display: none; }
+  .switch-track {
+    width: 32px;
+    height: 18px;
+    border-radius: 9px;
+    background: var(--surface-offset);
+    position: relative;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .switch-track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.2s;
+  }
+  .switch input:checked + .switch-track { background: var(--primary); }
+  .switch input:checked + .switch-track::after { transform: translateX(14px); }
+
+  /* ===== 提示 ===== */
+  .alert {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    margin-bottom: 12px;
+  }
+  .alert-info {
+    background: var(--primary-light);
+    color: var(--primary);
+    border: 1px solid #c8dae6;
+  }
+  .alert-warning {
+    background: #fdf5ec;
+    color: var(--accent);
+    border: 1px solid #f0dcc4;
+  }
+  .alert-success {
+    background: #f0f8ec;
+    color: var(--success);
+    border: 1px solid #d4e8c8;
+  }
+
+  .divider-line {
+    height: 1px;
+    background: var(--divider);
+    margin: 16px 0;
+  }
+
+  .loading-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .hidden { display: none !important; }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 1024px) {
+    .layout { grid-template-columns: 1fr; }
+    .panel-center { order: -1; min-height: 50vh; }
+  }
 </style>
 </head>
 <body>
 
-<h1>柜门拉手替换工具</h1>
-<p class="hint">1) 上传原始柜门照片 → 2) 在图上拖拽画框圈选旧拉手位置 → 3) 上传想换上去的新拉手图片 → 4) 点击"生成替换效果"</p>
-
-<div class="row">
-  <div class="col">
-    <label>原始照片（在下方画框圈选旧拉手）</label>
-    <input type="file" id="origFile" accept="image/*" />
-    <canvas id="canvas"></canvas>
-    <p class="hint">按住鼠标左键拖拽即可画出选框，可重新画覆盖上一次的选框。</p>
+<!-- ===== 顶栏 ===== -->
+<div class="topbar">
+  <div class="brand">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--primary)">
+      <rect x="3" y="3" width="22" height="22" rx="2"/>
+      <line x1="14" y1="3" x2="14" y2="25"/>
+      <circle cx="9" cy="14" r="2.5" fill="currentColor" stroke="none"/>
+      <circle cx="19" cy="14" r="2.5" fill="currentColor" stroke="none"/>
+    </svg>
+    <span>拉手换装 AI</span>
+    <span class="brand-sub">柜门拉手智能替换工具</span>
   </div>
-  <div class="col">
-    <label>新拉手图片</label>
-    <input type="file" id="newHandleFile" accept="image/*" />
-    <img id="newHandlePreview" class="preview" />
-  </div>
-</div>
-
-<div class="row">
-  <div class="col">
-    <label>使用的 AI 引擎</label>
-    <select id="engine">
-      <option value="openai">OpenAI gpt-image-1（蒙版精确编辑，推荐）</option>
-      <option value="gemini">Gemini 2.5 Flash Image（多图对话式编辑）</option>
-    </select>
-  </div>
-  <div class="col">
-    <label>补充说明（可选，例如新拉手材质/颜色/风格）</label>
-    <input type="text" id="extraPrompt" placeholder="例如：新拉手为拉丝黑色金属长条把手" style="width:100%;" />
+  <div class="topbar-actions">
+    <button class="btn btn-secondary" id="btnReset">重置</button>
   </div>
 </div>
 
-<button id="submitBtn">生成替换效果</button>
-<p id="status" class="hint"></p>
+<!-- ===== 主布局 ===== -->
+<div class="layout">
 
-<div id="result"></div>
+  <!-- ===== 左面板：上传与控制 ===== -->
+  <div class="panel">
+    <!-- 步骤1: 上传柜门原图 -->
+    <div class="section-title">步骤 1 · 上传柜门原图</div>
+    <div class="upload-zone" id="cabinetUpload">
+      <div class="icon">📁</div>
+      <div class="label">点击或拖拽上传柜门照片</div>
+      <div class="hint">支持 JPG / PNG，柜门、抽屉、衣柜均可</div>
+      <input type="file" id="cabinetFile" accept="image/*" style="display:none" />
+    </div>
+
+    <div class="divider-line"></div>
+
+    <!-- 步骤2: 上传新拉手 -->
+    <div class="section-title">步骤 2 · 上传新拉手产品图</div>
+    <div class="upload-zone" id="handleUpload">
+      <div class="icon">🔑</div>
+      <div class="label">点击或拖拽上传新拉手图片</div>
+      <div class="hint">白底产品图或透明 PNG 均可，自动去背景</div>
+      <input type="file" id="handleFile" accept="image/*" style="display:none" />
+    </div>
+
+    <div id="handlePreviewArea" class="hidden">
+      <img id="handlePreview" class="upload-preview" />
+      <div class="alert alert-success" style="margin-top:8px; font-size:11px;">
+        ✓ 已自动去背景并裁剪
+      </div>
+    </div>
+
+    <div class="divider-line"></div>
+
+    <!-- 步骤3: 替换参数 -->
+    <div class="section-title">步骤 3 · 替换参数</div>
+
+    <div class="control-group">
+      <div class="control-label">
+        <span>拉手大小</span>
+        <span class="value" id="scaleValue">92%</span>
+      </div>
+      <input type="range" id="scaleSlider" min="50" max="150" value="92" step="1" />
+      <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-faint); margin-top:2px;">
+        <span>50%</span><span>默认 92%</span><span>150%</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <div class="control-label">
+        <span>旋转角度</span>
+        <span class="value" id="rotationValue">0°</span>
+      </div>
+      <input type="range" id="rotationSlider" min="-180" max="180" value="0" step="1" />
+    </div>
+
+    <div class="control-group">
+      <div class="control-label"><span>阴影强度</span></div>
+      <select id="shadowStrength">
+        <option value="none">无阴影</option>
+        <option value="light">轻微</option>
+        <option value="standard" selected>标准（推荐）</option>
+        <option value="strong">强烈</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <div class="control-label"><span>光源方向</span></div>
+      <select id="lightDirection">
+        <option value="auto" selected>自动</option>
+        <option value="left">左侧光</option>
+        <option value="right">右侧光</option>
+        <option value="top">顶部光</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label class="switch">
+        <input type="checkbox" id="edgeDarkening" checked />
+        <span class="switch-track"></span>
+        <span>边缘暗化（增强安装感）</span>
+      </label>
+    </div>
+
+    <div class="alert alert-info">
+      <strong>核心保证：</strong>新拉手始终等比例缩放，绝不拉伸变形。默认尺寸为原拉手框的 92%。
+    </div>
+  </div>
+
+  <!-- ===== 中间：画布 ===== -->
+  <div class="panel-center">
+    <div class="canvas-toolbar">
+      <div class="toolbar-left">
+        <button class="btn btn-ghost" id="btnClearBoxes" title="清空所有选区">
+          ✕ 清空选区
+        </button>
+        <span class="toolbar-info" id="canvasInfo">请上传柜门原图</span>
+      </div>
+      <div>
+        <button class="btn btn-primary btn-lg" id="btnComposite" disabled>
+          生成替换效果
+        </button>
+      </div>
+    </div>
+
+    <div class="canvas-wrapper" id="canvasWrapper">
+      <div class="canvas-empty" id="canvasEmpty">
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="8" y="6" width="48" height="52" rx="2"/>
+          <line x1="32" y1="6" x2="32" y2="58"/>
+          <circle cx="20" cy="32" r="4"/>
+          <circle cx="44" cy="32" r="4"/>
+        </svg>
+        <p>上传柜门原图后，在此处框选旧拉手位置<br/>支持框选 1 个或多个位置</p>
+      </div>
+      <div class="canvas-container hidden" id="canvasContainer">
+        <canvas id="mainCanvas"></canvas>
+        <canvas id="overlayCanvas"></canvas>
+      </div>
+    </div>
+
+    <div class="result-area" id="resultArea">
+      <div class="result-header">
+        <div class="result-title">替换效果预览</div>
+        <div>
+          <button class="btn btn-secondary" id="btnDownload">⬇ 下载图片</button>
+        </div>
+      </div>
+      <img id="resultImage" />
+    </div>
+  </div>
+
+  <!-- ===== 右面板：选区列表 ===== -->
+  <div class="panel">
+    <div class="section-title">
+      <span>已选拉手位置</span>
+      <span class="count-badge" id="boxCount">0</span>
+    </div>
+
+    <div class="box-list" id="boxList">
+      <div class="empty-state" id="boxEmpty">
+        在中间画布上拖拽框选旧拉手位置<br/><br/>
+        <span style="font-size:11px;">可框选多个位置，支持一次全部替换</span>
+      </div>
+    </div>
+
+    <div class="divider-line"></div>
+
+    <div class="section-title">操作提示</div>
+    <div style="font-size:12px; color:var(--text-muted); line-height:1.8;">
+      <div>① 上传柜门原图</div>
+      <div>② 上传新拉手产品图</div>
+      <div>③ 在画布上拖拽框选旧拉手</div>
+      <div>④ 可框选多个位置</div>
+      <div>⑤ 点击「生成替换效果」</div>
+      <div>⑥ 预览满意后下载</div>
+    </div>
+
+    <div class="divider-line"></div>
+
+    <div class="section-title">尺寸说明</div>
+    <div class="alert alert-info" style="font-size:11px;">
+      <p style="margin-bottom:4px;">新拉手按<strong>等比例</strong>缩放到选区内：</p>
+      <p>缩放 = min(框宽/拉手宽, 框高/拉手高) × 大小百分比</p>
+      <p style="margin-top:4px; color:var(--text-muted);">默认 92% 确保不超出选区，避免过大。</p>
+    </div>
+  </div>
+</div>
 
 <script>
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-let origImage = null;
-let origFileObj = null;
-let newHandleFileObj = null;
-let selRect = null; // {x,y,w,h} in canvas pixel coords (== original image pixel coords)
+// ============================================================================
+// 全局状态
+// ============================================================================
+const state = {
+  cabinetImage: null,      // HTMLImageElement
+  cabinetFile: null,       // File 对象
+  handleImage: null,       // HTMLImageElement (去背景后的透明PNG)
+  handleFile: null,        // File 对象（原始上传）
+  handleProcessedBlob: null, // 处理后的 Blob（用于发送到后端）
+  boxes: [],               // [{x, y, w, h}] 画布坐标（=原图像素坐标）
+  activeBoxIndex: -1,
+  isDragging: false,
+  dragStart: { x: 0, y: 0 },
+  dragCurrent: { x: 0, y: 0 },
+};
 
-document.getElementById('origFile').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  origFileObj = file;
+const API_BASE = typeof __PORT_5000__ !== 'undefined'
+  ? __PORT_5000__
+  : (window.location.origin.includes('pplx.app')
+    ? window.location.origin
+    : 'http://localhost:5000');
+
+// ============================================================================
+// DOM 引用
+// ============================================================================
+const mainCanvas = document.getElementById('mainCanvas');
+const overlayCanvas = document.getElementById('overlayCanvas');
+const mainCtx = mainCanvas.getContext('2d');
+const overlayCtx = overlayCanvas.getContext('2d');
+const canvasContainer = document.getElementById('canvasContainer');
+const canvasEmpty = document.getElementById('canvasEmpty');
+const canvasWrapper = document.getElementById('canvasWrapper');
+
+// ============================================================================
+// 文件上传：柜门原图
+// ============================================================================
+const cabinetUpload = document.getElementById('cabinetUpload');
+const cabinetFileInput = document.getElementById('cabinetFile');
+
+cabinetUpload.addEventListener('click', () => cabinetFileInput.click());
+cabinetUpload.addEventListener('dragover', (e) => { e.preventDefault(); cabinetUpload.style.borderColor = 'var(--primary)'; });
+cabinetUpload.addEventListener('dragleave', () => { cabinetUpload.style.borderColor = ''; });
+cabinetUpload.addEventListener('drop', (e) => {
+  e.preventDefault();
+  cabinetUpload.style.borderColor = '';
+  if (e.dataTransfer.files[0]) loadCabinetImage(e.dataTransfer.files[0]);
+});
+
+cabinetFileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) loadCabinetImage(e.target.files[0]);
+});
+
+function loadCabinetImage(file) {
+  state.cabinetFile = file;
+  state.boxes = [];
+  state.activeBoxIndex = -1;
+  updateBoxList();
+
   const img = new Image();
   img.onload = () => {
-    origImage = img;
-    canvas.width = img.width;
-    canvas.height = img.height;
-    ctx.drawImage(img, 0, 0);
-    selRect = null;
+    state.cabinetImage = img;
+    mainCanvas.width = img.width;
+    mainCanvas.height = img.height;
+    overlayCanvas.width = img.width;
+    overlayCanvas.height = img.height;
+    mainCtx.drawImage(img, 0, 0);
+
+    canvasEmpty.classList.add('hidden');
+    canvasContainer.classList.remove('hidden');
+    document.getElementById('canvasInfo').textContent =
+      `${img.width} × ${img.height} px · 点击「生成替换效果」按钮`;
+    cabinetUpload.classList.add('has-file');
+    cabinetUpload.querySelector('.label').textContent = file.name;
+    updateCompositeButton();
   };
   img.src = URL.createObjectURL(file);
+}
+
+// ============================================================================
+// 文件上传：新拉手
+// ============================================================================
+const handleUpload = document.getElementById('handleUpload');
+const handleFileInput = document.getElementById('handleFile');
+const handlePreviewArea = document.getElementById('handlePreviewArea');
+const handlePreview = document.getElementById('handlePreview');
+
+handleUpload.addEventListener('click', () => handleFileInput.click());
+handleUpload.addEventListener('dragover', (e) => { e.preventDefault(); handleUpload.style.borderColor = 'var(--primary)'; });
+handleUpload.addEventListener('dragleave', () => { handleUpload.style.borderColor = ''; });
+handleUpload.addEventListener('drop', (e) => {
+  e.preventDefault();
+  handleUpload.style.borderColor = '';
+  if (e.dataTransfer.files[0]) loadHandleImage(e.dataTransfer.files[0]);
 });
 
-document.getElementById('newHandleFile').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  newHandleFileObj = file;
-  document.getElementById('newHandlePreview').src = URL.createObjectURL(file);
+handleFileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) loadHandleImage(e.target.files[0]);
 });
 
-let dragging = false, startX = 0, startY = 0;
+async function loadHandleImage(file) {
+  state.handleFile = file;
+  handleUpload.classList.add('has-file');
+  handleUpload.querySelector('.label').textContent = file.name;
 
-canvas.addEventListener('mousedown', (e) => {
-  if (!origImage) return;
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  startX = (e.clientX - rect.left) * scaleX;
-  startY = (e.clientY - rect.top) * scaleY;
-  dragging = true;
-});
+  // 调用后端去背景
+  const formData = new FormData();
+  formData.append('image', file);
 
-canvas.addEventListener('mousemove', (e) => {
-  if (!dragging || !origImage) return;
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const curX = (e.clientX - rect.left) * scaleX;
-  const curY = (e.clientY - rect.top) * scaleY;
+  handlePreviewArea.classList.remove('hidden');
+  handlePreview.src = URL.createObjectURL(file);
+  handlePreviewArea.querySelector('.alert').textContent = '⏳ 正在自动去背景...';
 
-  ctx.drawImage(origImage, 0, 0);
-  ctx.strokeStyle = 'red';
-  ctx.lineWidth = Math.max(2, canvas.width / 300);
-  const x = Math.min(startX, curX), y = Math.min(startY, curY);
-  const w = Math.abs(curX - startX), h = Math.abs(curY - startY);
-  ctx.strokeRect(x, y, w, h);
-  selRect = { x, y, w, h };
-});
-
-canvas.addEventListener('mouseup', () => { dragging = false; });
-
-function buildMaskDataURL() {
-  // Mask: opaque (black, alpha=255) everywhere EXCEPT the selected rect,
-  // which is fully transparent (alpha=0) -> that is the region the AI will repaint.
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = canvas.width;
-  maskCanvas.height = canvas.height;
-  const mctx = maskCanvas.getContext('2d');
-  mctx.fillStyle = 'rgba(0,0,0,255)';
-  mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
-  if (selRect) {
-    mctx.clearRect(selRect.x, selRect.y, selRect.w, selRect.h);
+  try {
+    const resp = await fetch(API_BASE + '/remove-bg', { method: 'POST', body: formData });
+    if (!resp.ok) throw new Error('去背景失败');
+    const blob = await resp.blob();
+    state.handleProcessedBlob = blob;
+    handlePreview.src = URL.createObjectURL(blob);
+    handlePreviewArea.querySelector('.alert').textContent = '✓ 已自动去背景并裁剪';
+    handlePreviewArea.querySelector('.alert').className = 'alert alert-success';
+    updateCompositeButton();
+  } catch (err) {
+    handlePreviewArea.querySelector('.alert').textContent = '⚠ 去背景失败，将使用原图';
+    handlePreviewArea.querySelector('.alert').className = 'alert alert-warning';
+    state.handleProcessedBlob = file;
+    updateCompositeButton();
   }
-  return maskCanvas.toDataURL('image/png');
 }
 
-function dataURLtoBlob(dataURL) {
-  const [header, base64] = dataURL.split(',');
-  const mime = header.match(/:(.*?);/)[1];
-  const binary = atob(base64);
-  const arr = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
-  return new Blob([arr], { type: mime });
+// ============================================================================
+// 画布交互：框选旧拉手位置
+// ============================================================================
+function getCanvasCoords(e) {
+  const rect = mainCanvas.getBoundingClientRect();
+  const scaleX = mainCanvas.width / rect.width;
+  const scaleY = mainCanvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY,
+  };
 }
 
-document.getElementById('submitBtn').addEventListener('click', async () => {
-  const statusEl = document.getElementById('status');
-  const resultEl = document.getElementById('result');
-  resultEl.innerHTML = '';
+overlayCanvas.style.pointerEvents = 'auto';
 
-  if (!origFileObj) { statusEl.textContent = '请先上传原始照片。'; return; }
-  if (!newHandleFileObj) { statusEl.textContent = '请上传新拉手图片。'; return; }
-  if (!selRect) { statusEl.textContent = '请在原图上画框圈出旧拉手位置。'; return; }
+overlayCanvas.addEventListener('mousedown', (e) => {
+  if (!state.cabinetImage) return;
+  const { x, y } = getCanvasCoords(e);
+  state.isDragging = true;
+  state.dragStart = { x, y };
+  state.dragCurrent = { x, y };
+});
 
-  const engine = document.getElementById('engine').value;
-  const extraPrompt = document.getElementById('extraPrompt').value;
+overlayCanvas.addEventListener('mousemove', (e) => {
+  if (!state.isDragging) return;
+  const { x, y } = getCanvasCoords(e);
+  state.dragCurrent = { x, y };
+  drawOverlay();
+});
+
+overlayCanvas.addEventListener('mouseup', (e) => {
+  if (!state.isDragging) return;
+  state.isDragging = false;
+
+  const { x: endX, y: endY } = getCanvasCoords(e);
+  const x = Math.min(state.dragStart.x, endX);
+  const y = Math.min(state.dragStart.y, endY);
+  const w = Math.abs(endX - state.dragStart.x);
+  const h = Math.abs(endY - state.dragStart.y);
+
+  // 最小尺寸检查
+  if (w < 10 || h < 10) {
+    drawOverlay();
+    return;
+  }
+
+  state.boxes.push({ x, y, w, h });
+  state.activeBoxIndex = state.boxes.length - 1;
+  updateBoxList();
+  drawOverlay();
+  updateCompositeButton();
+});
+
+function drawOverlay() {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+  // 绘制所有已确认的选区
+  state.boxes.forEach((box, i) => {
+    const isActive = i === state.activeBoxIndex;
+    overlayCtx.strokeStyle = isActive ? '#c47b3a' : '#2d5f7a';
+    overlayCtx.lineWidth = Math.max(2, mainCanvas.width / 400);
+    overlayCtx.setLineDash(isActive ? [] : [8, 4]);
+    overlayCtx.strokeRect(box.x, box.y, box.w, box.h);
+
+    // 编号标签
+    overlayCtx.setLineDash([]);
+    const labelSize = Math.max(16, mainCanvas.width / 40);
+    overlayCtx.font = `bold ${labelSize}px sans-serif`;
+    const label = `${i + 1}`;
+    const labelW = overlayCtx.measureText(label).width + 8;
+    overlayCtx.fillStyle = isActive ? '#c47b3a' : '#2d5f7a';
+    overlayCtx.fillRect(box.x, box.y - labelSize - 4, labelW, labelSize + 4);
+    overlayCtx.fillStyle = '#fff';
+    overlayCtx.fillText(label, box.x + 4, box.y - 6);
+  });
+
+  // 绘制正在拖拽的选区
+  if (state.isDragging) {
+    const x = Math.min(state.dragStart.x, state.dragCurrent.x);
+    const y = Math.min(state.dragStart.y, state.dragCurrent.y);
+    const w = Math.abs(state.dragCurrent.x - state.dragStart.x);
+    const h = Math.abs(state.dragCurrent.y - state.dragStart.y);
+    overlayCtx.strokeStyle = '#c47b3a';
+    overlayCtx.lineWidth = Math.max(2, mainCanvas.width / 400);
+    overlayCtx.setLineDash([6, 3]);
+    overlayCtx.strokeRect(x, y, w, h);
+    overlayCtx.setLineDash([]);
+    overlayCtx.fillStyle = 'rgba(196, 123, 58, 0.1)';
+    overlayCtx.fillRect(x, y, w, h);
+  }
+}
+
+// ============================================================================
+// 选区列表管理
+// ============================================================================
+function updateBoxList() {
+  const list = document.getElementById('boxList');
+  const empty = document.getElementById('boxEmpty');
+  const count = document.getElementById('boxCount');
+
+  count.textContent = state.boxes.length;
+
+  if (state.boxes.length === 0) {
+    empty.style.display = 'block';
+    list.innerHTML = '';
+    list.appendChild(empty);
+    document.getElementById('canvasInfo').textContent =
+      state.cabinetImage ? '拖拽框选旧拉手位置' : '请上传柜门原图';
+    return;
+  }
+
+  empty.style.display = 'none';
+  list.innerHTML = '';
+  state.boxes.forEach((box, i) => {
+    const item = document.createElement('div');
+    item.className = 'box-item' + (i === state.activeBoxIndex ? ' active' : '');
+    item.innerHTML = `
+      <div class="box-num">${i + 1}</div>
+      <div class="box-info">
+        <strong>${Math.round(box.w)}×${Math.round(box.h)}</strong> px
+      </div>
+      <button class="box-del" data-index="${i}" title="删除">✕</button>
+    `;
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('box-del')) {
+        e.stopPropagation();
+        state.boxes.splice(i, 1);
+        state.activeBoxIndex = Math.min(state.activeBoxIndex, state.boxes.length - 1);
+        updateBoxList();
+        drawOverlay();
+        updateCompositeButton();
+      } else {
+        state.activeBoxIndex = i;
+        updateBoxList();
+        drawOverlay();
+      }
+    });
+    list.appendChild(item);
+  });
+
+  document.getElementById('canvasInfo').textContent =
+    `已选 ${state.boxes.length} 个位置 · 点击「生成替换效果」`;
+}
+
+document.getElementById('btnClearBoxes').addEventListener('click', () => {
+  state.boxes = [];
+  state.activeBoxIndex = -1;
+  updateBoxList();
+  drawOverlay();
+  updateCompositeButton();
+});
+
+// ============================================================================
+// 参数控件
+// ============================================================================
+const scaleSlider = document.getElementById('scaleSlider');
+const scaleValue = document.getElementById('scaleValue');
+scaleSlider.addEventListener('input', () => {
+  scaleValue.textContent = scaleSlider.value + '%';
+});
+
+const rotationSlider = document.getElementById('rotationSlider');
+const rotationValue = document.getElementById('rotationValue');
+rotationSlider.addEventListener('input', () => {
+  rotationValue.textContent = rotationSlider.value + '°';
+});
+
+// ============================================================================
+// 生成替换效果
+// ============================================================================
+function updateCompositeButton() {
+  const btn = document.getElementById('btnComposite');
+  btn.disabled = !(state.cabinetFile && state.handleProcessedBlob && state.boxes.length > 0);
+}
+
+document.getElementById('btnComposite').addEventListener('click', async () => {
+  const btn = document.getElementById('btnComposite');
+  const resultArea = document.getElementById('resultArea');
+  const resultImage = document.getElementById('resultImage');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading-spinner"></span> 正在合成...';
 
   const formData = new FormData();
-  formData.append('original_image', origFileObj);
-  formData.append('new_handle_image', newHandleFileObj);
-  formData.append('extra_prompt', extraPrompt);
+  formData.append('original_image', state.cabinetFile);
+  formData.append('handle_image', state.handleProcessedBlob, 'handle.png');
+  formData.append('boxes', JSON.stringify(state.boxes));
+  formData.append('scale', scaleSlider.value);
+  formData.append('rotation', rotationSlider.value);
+  formData.append('shadow_strength', document.getElementById('shadowStrength').value);
+  formData.append('light_direction', document.getElementById('lightDirection').value);
+  formData.append('edge_darkening', document.getElementById('edgeDarkening').checked ? 'true' : 'false');
 
-  if (engine === 'openai') {
-    const maskBlob = dataURLtoBlob(buildMaskDataURL());
-    formData.append('mask', maskBlob, 'mask.png');
-  }
-
-  const endpoint = engine === 'openai' ? '/swap-handle-openai' : '/swap-handle-gemini';
-
-  statusEl.textContent = '正在生成，请稍候（可能需要 10-30 秒）...';
   try {
-    const resp = await fetch(endpoint, { method: 'POST', body: formData });
+    const resp = await fetch(API_BASE + '/composite', { method: 'POST', body: formData });
     if (!resp.ok) {
       const errText = await resp.text();
-      throw new Error(errText);
+      throw new Error(errText || '合成失败');
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
-    resultEl.innerHTML = '<label>替换效果</label><img class="preview" src="' + url + '" />';
-    statusEl.textContent = '完成。';
+    resultImage.src = url;
+    resultArea.classList.add('show');
+    document.getElementById('canvasInfo').textContent = '✓ 合成完成，可下载或调整参数后重新生成';
   } catch (err) {
-    statusEl.textContent = '出错了：' + err.message;
+    document.getElementById('canvasInfo').textContent = '出错了：' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '生成替换效果';
   }
 });
-</script>
 
+// ============================================================================
+// 下载
+// ============================================================================
+document.getElementById('btnDownload').addEventListener('click', () => {
+  const img = document.getElementById('resultImage');
+  if (!img.src) return;
+  const a = document.createElement('a');
+  a.href = img.src;
+  a.download = 'handle-swap-result.png';
+  a.click();
+});
+
+// ============================================================================
+// 重置
+// ============================================================================
+document.getElementById('btnReset').addEventListener('click', () => {
+  state.cabinetImage = null;
+  state.cabinetFile = null;
+  state.handleImage = null;
+  state.handleFile = null;
+  state.handleProcessedBlob = null;
+  state.boxes = [];
+  state.activeBoxIndex = -1;
+
+  cabinetUpload.classList.remove('has-file');
+  cabinetUpload.querySelector('.label').textContent = '点击或拖拽上传柜门照片';
+  handleUpload.classList.remove('has-file');
+  handleUpload.querySelector('.label').textContent = '点击或拖拽上传新拉手图片';
+  handlePreviewArea.classList.add('hidden');
+
+  canvasEmpty.classList.remove('hidden');
+  canvasContainer.classList.add('hidden');
+
+  document.getElementById('resultArea').classList.remove('show');
+  document.getElementById('canvasInfo').textContent = '请上传柜门原图';
+
+  cabinetFileInput.value = '';
+  handleFileInput.value = '';
+
+  updateBoxList();
+  updateCompositeButton();
+});
+
+</script>
 </body>
 </html>
