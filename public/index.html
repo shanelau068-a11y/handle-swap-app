@@ -34,37 +34,94 @@
   </section>
   <aside class="card right"><div class="side">
     <h2>3. 安装设置</h2>
-    <div class="field"><label>安装大小 <output id="sizeOut">92%</output></label><input id="size" type="range" min="70" max="120" value="92" disabled></div>
+    <div class="field"><label>安装大小 <output id="sizeOut">92%</output></label><input id="size" type="range" min="50" max="100" value="92" disabled></div>
     <div class="field"><label>旋转角度 <output id="rotateOut">0°</output></label><input id="rotate" type="range" min="-180" max="180" value="0" disabled></div>
     <div class="field"><label>接触阴影 <output id="shadowOut">35%</output></label><input id="shadow" type="range" min="0" max="80" value="35" disabled></div>
     <div class="field"><label>边缘暗化 <output id="edgeOut">12%</output></label><input id="edge" type="range" min="0" max="35" value="12" disabled></div>
     <label class="check"><input id="removeWhite" type="checkbox" checked disabled>自动去除近白色背景（适合白底拉手产品图）</label>
-    <label class="check"><input id="preserve" type="checkbox" checked disabled>锁定原始长宽比，不允许拉伸变形</label>
+    <label class="check"><input id="preserve" type="checkbox" checked disabled>锁定原始长宽比（固定开启）</label>
     <div class="row" style="margin-top:15px"><button id="resetOne" disabled>重置选中位置</button><button id="download" class="primary" disabled>下载 PNG</button></div>
     <div class="notice"><b>尺寸规则：</b>新拉手始终按原始比例缩放，默认占旧拉手框最大可容纳尺寸的 92%，不会被横向或纵向硬拉伸。</div>
   </div></aside>
 </main>
 <script>
 (()=>{
-const $=id=>document.getElementById(id), canvas=$("canvas"), ctx=canvas.getContext("2d"), base=new Image(), handle=new Image();
-let baseReady=false, handleReady=false, slots=[], selected=-1, drawing=false, start=null, compare=false;
-const controls=["addSlot","removeSlot","clearAll","compare","size","rotate","shadow","edge","removeWhite","preserve","resetOne","download"];
-function enable(){const ready=baseReady; controls.forEach(id=>$(id).disabled=!ready); $("addSlot").disabled=!ready; $("download").disabled=!(baseReady&&handleReady&&slots.length); $("status").textContent=!baseReady?"先上传柜门原图":!handleReady?"已载入柜门图，请上传新拉手":slots.length?`已标记 ${slots.length} 个位置，正在保持新拉手比例合成`:`点击“添加位置”后框选旧拉手`;}
+const $=id=>document.getElementById(id);
+const canvas=$("canvas"),ctx=canvas.getContext("2d"),base=new Image(),handle=new Image();
+let baseReady=false,handleReady=false,preparedHandle=null,slots=[],selected=-1,drawing=false,start=null,compare=false;
+const controls=["addSlot","removeSlot","clearAll","compare","size","rotate","shadow","edge","removeWhite","resetOne","download"];
+
+function enable(){
+  controls.forEach(id=>$(id).disabled=!baseReady);
+  $("preserve").disabled=true;
+  $("download").disabled=!(baseReady&&handleReady&&slots.length);
+  $("status").textContent=!baseReady?"先上传柜门原图":!handleReady?"已载入柜门图，请上传新拉手":slots.length?`已标记 ${slots.length} 个位置，已锁定比例合成`:`点击“添加位置”后框选旧拉手`;
+}
 function read(file,img,done){if(!file)return;const r=new FileReader();r.onload=e=>{img.onload=done;img.src=e.target.result};r.readAsDataURL(file)}
+
+// 只移除从图片边缘连通的背景，产品内部的白色珍珠和高光会保留。
+function prepareHandleImage(img,removeBackground){
+  const raw=document.createElement("canvas");raw.width=img.naturalWidth;raw.height=img.naturalHeight;
+  const rctx=raw.getContext("2d");rctx.drawImage(img,0,0);const image=rctx.getImageData(0,0,raw.width,raw.height);
+  const {width:w,height:h,data}=image,remove=new Uint8Array(w*h),seen=new Uint8Array(w*h);
+  if(removeBackground){
+    const seeds=[[0,0],[w-1,0],[0,h-1],[w-1,h-1]],tol=28;
+    function flood(sx,sy){
+      if(sx<0||sy<0||sx>=w||sy>=h)return;let si=(sy*w+sx)*4;if(data[si+3]<10)return;
+      const sr=data[si],sg=data[si+1],sb=data[si+2],queue=[sy*w+sx];seen[sy*w+sx]=1;
+      for(let head=0;head<queue.length;head++){
+        const p=queue[head],x=p%w,y=(p/w)|0,i=p*4;
+        if(Math.max(Math.abs(data[i]-sr),Math.abs(data[i+1]-sg),Math.abs(data[i+2]-sb))>tol)continue;
+        remove[p]=1;
+        const ns=p>0?p-1:-1,ne=p<w*h-1?p+1:-1,nu=y>0?p-w:-1,nd=y<h-1?p+w:-1;
+        for(const n of [ns,ne,nu,nd]){if(n<0||seen[n])continue;const ni=n*4;if(data[ni+3]<10){seen[n]=1;continue}if(Math.max(Math.abs(data[ni]-sr),Math.abs(data[ni+1]-sg),Math.abs(data[ni+2]-sb))<=tol){seen[n]=1;queue.push(n)}}
+      }
+    }
+    for(const [sx,sy] of seeds)flood(sx,sy);
+  }
+  for(let p=0;p<w*h;p++)if(remove[p])data[p*4+3]=0;
+  rctx.putImageData(image,0,0);return trimCanvas(raw);
+}
+function trimCanvas(source){
+  const sctx=source.getContext("2d"),img=sctx.getImageData(0,0,source.width,source.height),d=img.data;
+  let x0=source.width,y0=source.height,x1=-1,y1=-1;
+  for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++)if(d[(y*source.width+x)*4+3]>8){x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y)}
+  if(x1<0){const empty=document.createElement("canvas");empty.width=empty.height=1;return empty}
+  const out=document.createElement("canvas");out.width=x1-x0+1;out.height=y1-y0+1;out.getContext("2d").drawImage(source,x0,y0,out.width,out.height,0,0,out.width,out.height);return out;
+}
+function prepare(){if(handleReady)preparedHandle=prepareHandleImage(handle,$("removeWhite").checked)}
+
 $("baseInput").onchange=e=>read(e.target.files[0],base,()=>{baseReady=true;canvas.width=base.naturalWidth;canvas.height=base.naturalHeight;canvas.style.display="block";$("empty").style.display="none";enable();draw()});
-$("handleInput").onchange=e=>read(e.target.files[0],handle,()=>{handleReady=true;enable();draw()});
-function val(id){return +$(id).value} function alpha(){return val("shadow")/100} function renderHandle(s){if(!handleReady||compare)return;const ratio=Math.min(s.w/handle.naturalWidth,s.h/handle.naturalHeight)*val("size")/100;const w=handle.naturalWidth*ratio,h=handle.naturalHeight*ratio,cx=s.x+s.w/2,cy=s.y+s.h/2,ang=val("rotate")*Math.PI/180;ctx.save();ctx.translate(cx,cy);ctx.rotate(ang);ctx.shadowColor=`rgba(0,0,0,${alpha()})`;ctx.shadowBlur=Math.max(3,Math.min(w,h)*.12);ctx.shadowOffsetX=Math.max(1,Math.min(w,h)*.035);ctx.shadowOffsetY=Math.max(2,Math.min(w,h)*.06);ctx.globalAlpha=1; if($("removeWhite").checked){const off=document.createElement("canvas"),o=off.getContext("2d");off.width=handle.naturalWidth;off.height=handle.naturalHeight;o.drawImage(handle,0,0);const d=o.getImageData(0,0,off.width,off.height);for(let i=0;i<d.data.length;i+=4){let r=d.data[i],g=d.data[i+1],b=d.data[i+2];if(r>238&&g>238&&b>238)d.data[i+3]=Math.max(0,255-(r+g+b-714)*6)}o.putImageData(d,0,0);ctx.drawImage(off,-w/2,-h/2,w,h)}else ctx.drawImage(handle,-w/2,-h/2,w,h);ctx.shadowColor="transparent";const edge=val("edge")/100;if(edge){ctx.globalCompositeOperation="source-atop";const gr=ctx.createLinearGradient(-w/2,-h/2,w/2,h/2);gr.addColorStop(0,`rgba(0,0,0,${edge*.6})`);gr.addColorStop(.32,"rgba(0,0,0,0)");gr.addColorStop(1,`rgba(0,0,0,${edge})`);ctx.fillStyle=gr;ctx.fillRect(-w/2,-h/2,w,h);ctx.globalCompositeOperation="source-over"}ctx.restore();}
-function draw(withBoxes=true){if(!baseReady)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(base,0,0,canvas.width,canvas.height);slots.forEach(renderHandle);if(withBoxes){slots.forEach((s,i)=>{ctx.save();ctx.lineWidth=Math.max(2,canvas.width/800);ctx.strokeStyle=i===selected?"#2563eb":"#f59e0b";ctx.setLineDash([8,6]);ctx.strokeRect(s.x,s.y,s.w,s.h);ctx.setLineDash([]);ctx.fillStyle=i===selected?"#2563eb":"#f59e0b";ctx.font=`${Math.max(13,canvas.width/55)}px sans-serif`;ctx.fillText(String(i+1),s.x+4,s.y-5);ctx.restore()})}}
+$("handleInput").onchange=e=>read(e.target.files[0],handle,()=>{handleReady=true;prepare();enable();draw()});
+function val(id){return +$(id).value}
+
+function eraseSlots(){
+  if(!slots.length)return;const image=ctx.getImageData(0,0,canvas.width,canvas.height),d=image.data,W=canvas.width,H=canvas.height;
+  for(const s of slots){const x0=Math.max(0,Math.floor(s.x)),y0=Math.max(0,Math.floor(s.y)),x1=Math.min(W,Math.ceil(s.x+s.w)),y1=Math.min(H,Math.ceil(s.y+s.h));if(x1<=x0||y1<=y0)continue;const margin=Math.max(2,Math.min(8,Math.floor(Math.min(x1-x0,y1-y0)*.08))),lx=Math.max(0,x0-margin),rx=Math.min(W-1,x1+margin-1),ty=Math.max(0,y0-margin),by=Math.min(H-1,y1+margin-1),ww=x1-x0,hh=y1-y0;
+    for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const tx=ww===1?0:(x-x0)/(ww-1),tyy=hh===1?0:(y-y0)/(hh-1),li=(y*W+lx)*4,ri=(y*W+rx)*4,ti=(ty*W+x)*4,bi=(by*W+x)*4,di=(y*W+x)*4;for(let c=0;c<3;c++)d[di+c]=Math.round(((d[li+c]*(1-tx)+d[ri+c]*tx)+(d[ti+c]*(1-tyy)+d[bi+c]*tyy))*.5);d[di+3]=255}
+  }ctx.putImageData(image,0,0);
+}
+
+function renderHandle(s){
+  if(!preparedHandle||compare)return;const sw=preparedHandle.width,sh=preparedHandle.height,ang=val("rotate")*Math.PI/180,c=Math.abs(Math.cos(ang)),sn=Math.abs(Math.sin(ang));
+  const fit=Math.min(s.w/Math.max(1,sw*c+sh*sn),s.h/Math.max(1,sw*sn+sh*c))*Math.min(1,val("size")/100);let w=Math.max(1,Math.round(sw*fit)),h=Math.max(1,Math.round(sh*fit));
+  // Canvas 的旋转边界也会受像素取整影响；按实际 w/h 再收缩一次，避免极端比例在角点溢出选区。
+  const actualFit=Math.min(1,s.w/Math.max(1,w*c+h*sn),s.h/Math.max(1,w*sn+h*c));if(actualFit<1){w=Math.max(1,Math.floor(w*actualFit));h=Math.max(1,Math.floor(h*actualFit))}const cx=s.x+s.w/2,cy=s.y+s.h/2;
+  ctx.save();ctx.beginPath();ctx.rect(s.x,s.y,s.w,s.h);ctx.clip();ctx.translate(cx,cy);ctx.rotate(ang);ctx.shadowColor=`rgba(0,0,0,${val("shadow")/100})`;ctx.shadowBlur=Math.max(2,Math.min(w,h)*.08);ctx.shadowOffsetX=Math.max(1,Math.min(w,h)*.035);ctx.shadowOffsetY=Math.max(1,Math.min(w,h)*.06);ctx.drawImage(preparedHandle,-w/2,-h/2,w,h);ctx.shadowColor="transparent";
+  const edge=val("edge")/100;if(edge){const layer=document.createElement("canvas");layer.width=w;layer.height=h;const l=layer.getContext("2d"),gr=l.createLinearGradient(0,0,w,h);gr.addColorStop(0,`rgba(0,0,0,${edge*.45})`);gr.addColorStop(.4,"rgba(0,0,0,0)");gr.addColorStop(1,`rgba(0,0,0,${edge*.7})`);l.fillStyle=gr;l.fillRect(0,0,w,h);l.globalCompositeOperation="destination-in";l.drawImage(preparedHandle,0,0,w,h);ctx.drawImage(layer,-w/2,-h/2,w,h)}ctx.restore();
+}
+function draw(withBoxes=true){if(!baseReady)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(base,0,0,canvas.width,canvas.height);if(compare)return;eraseSlots();slots.forEach(renderHandle);if(withBoxes)slots.forEach((s,i)=>{ctx.save();ctx.lineWidth=Math.max(2,canvas.width/800);ctx.strokeStyle=i===selected?"#2563eb":"#f59e0b";ctx.setLineDash([8,6]);ctx.strokeRect(s.x,s.y,s.w,s.h);ctx.setLineDash([]);ctx.fillStyle=i===selected?"#2563eb":"#f59e0b";ctx.font=`${Math.max(13,canvas.width/55)}px sans-serif`;ctx.fillText(String(i+1),s.x+4,s.y-5);ctx.restore()})}
 function point(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height}}
 $("addSlot").onclick=()=>{$("status").textContent="请在图片上拖动框选一个旧拉手位置";canvas.dataset.add="1"};
-canvas.addEventListener("pointerdown",e=>{if(!baseReady)return;const p=point(e);if(canvas.dataset.add){drawing=true;start=p;canvas.setPointerCapture(e.pointerId);return}selected=-1;for(let i=slots.length-1;i>=0;i--){let s=slots[i];if(p.x>=s.x&&p.x<=s.x+s.w&&p.y>=s.y&&p.y<=s.y+s.h){selected=i;break}}renderList();draw()});
+canvas.addEventListener("pointerdown",e=>{if(!baseReady)return;const p=point(e);if(canvas.dataset.add){drawing=true;start=p;canvas.setPointerCapture(e.pointerId);return}selected=-1;for(let i=slots.length-1;i>=0;i--){const s=slots[i];if(p.x>=s.x&&p.x<=s.x+s.w&&p.y>=s.y&&p.y<=s.y+s.h){selected=i;break}}renderList();draw()});
 canvas.addEventListener("pointermove",e=>{if(!drawing)return;const p=point(e);draw();ctx.save();ctx.strokeStyle="#2563eb";ctx.lineWidth=Math.max(2,canvas.width/800);ctx.setLineDash([8,6]);ctx.strokeRect(start.x,start.y,p.x-start.x,p.y-start.y);ctx.restore()});
-canvas.addEventListener("pointerup",e=>{if(!drawing)return;const p=point(e);drawing=false;canvas.dataset.add="";let x=Math.min(start.x,p.x),y=Math.min(start.y,p.y),w=Math.abs(p.x-start.x),h=Math.abs(p.y-start.y);if(w>8&&h>8){slots.push({x,y,w,h});selected=slots.length-1}renderList();enable();draw()});
+canvas.addEventListener("pointerup",e=>{if(!drawing)return;const p=point(e);drawing=false;canvas.dataset.add="";const x=Math.min(start.x,p.x),y=Math.min(start.y,p.y),w=Math.abs(p.x-start.x),h=Math.abs(p.y-start.y);if(w>8&&h>8){slots.push({x,y,w,h});selected=slots.length-1}renderList();enable();draw()});canvas.addEventListener("pointercancel",()=>{drawing=false;canvas.dataset.add="";draw()});
 function renderList(){$("slotList").innerHTML=slots.map((s,i)=>`<div class="slot ${i===selected?"selected":""}" data-i="${i}"><span class="dot"></span><b>位置 ${i+1}</b><small>${Math.round(s.w)} × ${Math.round(s.h)}</small></div>`).join("");[...document.querySelectorAll(".slot")].forEach(el=>el.onclick=()=>{selected=+el.dataset.i;renderList();draw()})}
 $("removeSlot").onclick=()=>{if(selected<0)return;slots.splice(selected,1);selected=Math.min(selected,slots.length-1);renderList();enable();draw()};$("clearAll").onclick=()=>{slots=[];selected=-1;renderList();enable();draw()};$("resetOne").onclick=()=>{if(selected<0)return;$("size").value=92;$("rotate").value=0;$("shadow").value=35;$("edge").value=12;update()};
-function update(){["size","rotate","shadow","edge"].forEach(id=>$(id+"Out").textContent=$(id).value+(id==="rotate"?"°":"%"));draw()}["size","rotate","shadow","edge","removeWhite"].forEach(id=>$(id).oninput=update);
-$("compare").addEventListener("pointerdown",()=>{compare=true;draw(false)});["pointerup","pointerleave"].forEach(ev=>$("compare").addEventListener(ev,()=>{compare=false;draw()}));
+function update(){["size","rotate","shadow","edge"].forEach(id=>$(id+"Out").textContent=$(id).value+(id==="rotate"?"°":"%"));draw()}["size","rotate","shadow","edge"].forEach(id=>$(id).oninput=update);$("removeWhite").onchange=()=>{prepare();update()};
+$("compare").addEventListener("pointerdown",()=>{compare=true;draw(false)});["pointerup","pointerleave","pointercancel"].forEach(ev=>$("compare").addEventListener(ev,()=>{compare=false;draw()}));
 $("download").onclick=()=>{draw(false);const a=document.createElement("a");a.download="handle-swap-result.png";a.href=canvas.toDataURL("image/png");a.click();draw()};
+enable();
 })();
 </script>
 </body>

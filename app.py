@@ -39,58 +39,42 @@ def index():
 
 def auto_remove_background(img, tolerance=32, feather=2):
     """
-    自动去除图片的纯色背景（numpy 加速）。
-    策略：采样四角颜色，将与背景色接近的像素设为透明。
+    自动去除从图片边缘连通的纯色背景。
+
+    只从四角做颜色容差洪水填充，因此产品内部的白色珍珠、高光和
+    浅色细节不会因为“接近白色”而被整片抠除。
     """
-    if img.mode == "RGBA":
-        alpha = np.array(img.split()[3])
-        corners = [alpha[0, 0], alpha[0, -1], alpha[-1, 0], alpha[-1, -1]]
-        if all(c < 10 for c in corners):
-            return img
-        rgb = img.convert("RGB")
-    else:
-        rgb = img.convert("RGB")
-        img = rgb.convert("RGBA")
-
-    arr = np.array(rgb)  # (h, w, 3)
-    h, w = arr.shape[:2]
-
-    # 采样四角各 5x5 区域
-    def sample_corner(cx, cy):
-        y0, y1 = max(0, cy - 2), min(h, cy + 3)
-        x0, x1 = max(0, cx - 2), min(w, cx + 3)
-        region = arr[y0:y1, x0:x1].reshape(-1, 3)
-        return region.mean(axis=0)
-
-    bg_colors = [
-        sample_corner(0, 0),
-        sample_corner(w - 1, 0),
-        sample_corner(0, h - 1),
-        sample_corner(w - 1, h - 1),
-    ]
-
-    # 取最亮的角作为背景色参考
-    bg_color = max(bg_colors, key=lambda c: sum(c))
-
-    # 计算每个像素与背景色的差异
-    diff = np.abs(arr - bg_color).max(axis=2)  # (h, w)
-
-    # 创建 alpha mask
-    alpha_mask = np.zeros((h, w), dtype=np.uint8)
-    # 完全背景 -> 0
-    alpha_mask[diff < tolerance] = 0
-    # 羽化过渡区
-    feather_zone = (diff >= tolerance) & (diff < tolerance + feather * 2)
-    alpha_mask[feather_zone] = ((diff[feather_zone] - tolerance) / (feather * 2) * 255).astype(np.uint8)
-    # 前景 -> 255
-    alpha_mask[diff >= tolerance + feather * 2] = 255
-
-    # 轻微模糊边缘
-    alpha_img = Image.fromarray(alpha_mask, mode="L")
-    alpha_img = alpha_img.filter(ImageFilter.GaussianBlur(radius=feather))
-
     result = img.convert("RGBA")
-    result.putalpha(alpha_img)
+    rgba = np.array(result)
+    rgb = result.convert("RGB")
+    h, w = rgba.shape[:2]
+    original_alpha = rgba[:, :, 3].copy()
+    if h == 0 or w == 0:
+        return result
+
+    # Pillow 在 C 层执行洪水填充，比 Python 逐像素 BFS 更适合大图。
+    # 使用一个不太可能出现在产品中的标记色来读回每个连通区域。
+    marker = (1, 2, 3)
+    remove_mask = np.zeros((h, w), dtype=bool)
+    seeds = ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))
+    for sx, sy in seeds:
+        if original_alpha[sy, sx] < 10:
+            continue
+        work = rgb.copy()
+        ImageDraw.floodfill(work, (sx, sy), marker, thresh=max(0, int(tolerance)))
+        remove_mask |= np.all(np.asarray(work) == marker, axis=2)
+
+    # 原本透明的像素始终透明；产品内部没有从边缘连通的白色区域不会被删除。
+    mask = np.where(remove_mask, 0, 255).astype(np.uint8)
+    if feather > 0:
+        # 只在前景边界做很窄的过渡，避免产生明显白边。
+        mask = np.asarray(
+            Image.fromarray(mask, mode="L").filter(
+                ImageFilter.GaussianBlur(radius=max(0.5, float(feather)))
+            )
+        )
+    alpha = (original_alpha.astype(np.float32) * mask.astype(np.float32) / 255.0).astype(np.uint8)
+    result.putalpha(Image.fromarray(alpha, mode="L"))
     return result
 
 
@@ -135,69 +119,52 @@ def create_shadow(handle_img, blur_radius, opacity, offset_x, offset_y):
     return shadow_img
 
 
+def alpha_composite_clipped(base_img, overlay, x, y):
+    """将 RGBA 图层放到 base 上，自动裁剪越过画布边界的部分。"""
+    x, y = int(x), int(y)
+    src_x0, src_y0 = max(0, -x), max(0, -y)
+    src_x1 = min(overlay.width, base_img.width - x)
+    src_y1 = min(overlay.height, base_img.height - y)
+    if src_x1 <= src_x0 or src_y1 <= src_y0:
+        return base_img
+    crop = overlay.crop((src_x0, src_y0, src_x1, src_y1))
+    base_img.alpha_composite(crop, (max(0, x), max(0, y)))
+    return base_img
+
+
 def erase_old_handle_area(base_img, box, feather=3):
     """
     擦除旧拉手区域：采样选区周围的柜门颜色，填充选区内部。
     这样旧拉手不会在新拉手下方透出来。
     """
-    bx, by, bw, bh = box
+    bx, by, bw, bh = [int(v) for v in box]
     img_w, img_h = base_img.size
-
-    # 扩展选区范围用于采样周围颜色
-    margin = max(5, min(bw, bh) // 4)
-    sample_x0 = max(0, bx - margin)
-    sample_y0 = max(0, by - margin)
-    sample_x1 = min(img_w, bx + bw + margin)
-    sample_y1 = min(img_h, by + bh + margin)
-
-    arr = np.array(base_img)  # (h, w, 4)
-
-    # 采样选区外围环带的颜色（排除选区内部）
-    ring_pixels = []
-    # 上边
-    if by - margin >= 0:
-        ring_pixels.append(arr[max(0, by - margin):by, sample_x0:sample_x1].reshape(-1, 4))
-    # 下边
-    if by + bh + margin <= img_h:
-        ring_pixels.append(arr[by + bh:min(img_h, by + bh + margin), sample_x0:sample_x1].reshape(-1, 4))
-    # 左边
-    if bx - margin >= 0:
-        ring_pixels.append(arr[sample_y0:sample_y1, max(0, bx - margin):bx].reshape(-1, 4))
-    # 右边
-    if bx + bw + margin <= img_w:
-        ring_pixels.append(arr[sample_y0:sample_y1, bx + bw:min(img_w, bx + bw + margin)].reshape(-1, 4))
-
-    if not ring_pixels:
+    x0, y0 = max(0, bx), max(0, by)
+    x1, y1 = min(img_w, bx + max(0, bw)), min(img_h, by + max(0, bh))
+    if x1 <= x0 or y1 <= y0:
         return base_img
 
-    ring = np.concatenate(ring_pixels, axis=0)
-    # 取中位数颜色（比平均值更抗干扰）
-    fill_color = np.median(ring, axis=0).astype(np.uint8)
+    # 仅在选区内部生成填充，选区外的像素完全不改。左右、上下边界的
+    # 插值能保留柜门的渐变，比整块使用一个中位数颜色更不容易留下色块。
+    arr = np.array(base_img).copy()
+    original = arr.copy()
+    margin = max(2, min(8, int(min(x1 - x0, y1 - y0) * 0.08)))
+    left_x, right_x = max(0, x0 - margin), min(img_w - 1, x1 + margin - 1)
+    top_y, bottom_y = max(0, y0 - margin), min(img_h - 1, y1 + margin - 1)
+    width, height = x1 - x0, y1 - y0
+    tx = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :, None]
+    ty = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None, None]
+    left = original[y0:y1, left_x:left_x + 1, :3].astype(np.float32)
+    right = original[y0:y1, right_x:right_x + 1, :3].astype(np.float32)
+    top = original[top_y:top_y + 1, x0:x1, :3].astype(np.float32)
+    bottom = original[bottom_y:bottom_y + 1, x0:x1, :3].astype(np.float32)
+    horizontal = left * (1.0 - tx) + right * tx
+    vertical = top * (1.0 - ty) + bottom * ty
+    fill = np.clip((horizontal + vertical) * 0.5, 0, 255).astype(np.uint8)
 
-    # 填充选区内部
-    fill_x0 = max(0, bx)
-    fill_y0 = max(0, by)
-    fill_x1 = min(img_w, bx + bw)
-    fill_y1 = min(img_h, by + bh)
-
-    arr[fill_y0:fill_y1, fill_x0:fill_x1, :3] = fill_color[:3]
-    arr[fill_y0:fill_y1, fill_x0:fill_x1, 3] = 255
-
-    result = Image.fromarray(arr, mode="RGBA")
-
-    # 对填充区域边缘做轻微模糊，使其与周围柜门融合
-    if feather > 0:
-        # 只模糊选区周围一圈
-        blur_margin = feather + 2
-        blur_x0 = max(0, fill_x0 - blur_margin)
-        blur_y0 = max(0, fill_y0 - blur_margin)
-        blur_x1 = min(img_w, fill_x1 + blur_margin)
-        blur_y1 = min(img_h, fill_y1 + blur_margin)
-        region = result.crop((blur_x0, blur_y0, blur_x1, blur_y1))
-        blurred = region.filter(ImageFilter.GaussianBlur(radius=feather))
-        result.paste(blurred, (blur_x0, blur_y0))
-
-    return result
+    arr[y0:y1, x0:x1, :3] = fill
+    arr[y0:y1, x0:x1, 3] = 255
+    return Image.fromarray(arr, mode="RGBA")
 
 
 # ---------------------------------------------------------------------------
@@ -235,18 +202,12 @@ def add_contact_edge_darkening(base_img, handle_img, pos_x, pos_y, radius=2, dar
         return base_img
 
     edge_crop = edge.crop((crop_x, crop_y, crop_x + crop_w, crop_y + crop_h))
+    # 暗度作用在 alpha，而不是把透明区域的 RGB 变黑。使用 alpha_composite
+    # 避免 paste(..., mask=同一张 RGBA 图) 造成 alpha 被重复相乘。
+    edge_alpha = edge_crop.point(lambda v: int(v * max(0, min(255, darkness)) / 255))
     dark_patch = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
-    dark_patch.putalpha(edge_crop)
-
-    # 应用暗度
-    r, g, b, a = dark_patch.split()
-    r = r.point(lambda v: max(0, v - darkness))
-    g = g.point(lambda v: max(0, v - darkness))
-    b = b.point(lambda v: max(0, v - darkness))
-    dark_patch = Image.merge("RGBA", (r, g, b, a))
-    base_img.paste(dark_patch, (paste_x, paste_y), dark_patch)
-
-    return base_img
+    dark_patch.putalpha(edge_alpha)
+    return alpha_composite_clipped(base_img, dark_patch, paste_x, paste_y)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +269,8 @@ def composite():
         abort(400, "至少需要一个选区位置")
 
     # 参数
-    scale_percent = float(request.form.get("scale", 92))
+    # 100% 是选区内允许的最大尺寸；超过 100 的旧参数仍被安全截断。
+    scale_percent = max(1.0, min(100.0, float(request.form.get("scale", 92))))
     rotation = float(request.form.get("rotation", 0))
     shadow_strength = request.form.get("shadow_strength", "standard")
     light_direction = request.form.get("light_direction", "auto")
@@ -364,10 +326,13 @@ def composite():
         # 1. 擦除旧拉手区域（用周围柜门颜色填充）
         base_img = erase_old_handle_area(base_img, (bx, by, bw, bh), feather=3)
 
-        # 2. 计算等比例缩放：取宽和高方向的最小比例，确保不变形
-        scale_w = bw / handle_w
-        scale_h = bh / handle_h
-        uniform_scale = min(scale_w, scale_h) * user_scale
+        # 2. 先计算旋转后的包围盒，再按最小比例缩放。这样 45°、90°
+        # 等角度也不会因为 expand=True 把产品推出原选区。
+        angle = math.radians(rotation % 180.0)
+        cos_a, sin_a = abs(math.cos(angle)), abs(math.sin(angle))
+        rotated_w = handle_w * cos_a + handle_h * sin_a
+        rotated_h = handle_w * sin_a + handle_h * cos_a
+        uniform_scale = min(bw / max(1.0, rotated_w), bh / max(1.0, rotated_h)) * user_scale
 
         new_w = max(1, int(handle_w * uniform_scale))
         new_h = max(1, int(handle_h * uniform_scale))
@@ -378,6 +343,23 @@ def composite():
         # 旋转
         if abs(rotation) > 0.5:
             resized = resized.rotate(rotation, expand=True, resample=Image.BICUBIC)
+
+        # Pillow 的 expand=True 会按像素取整，实际包围盒可能比上面的
+        # 三角函数估算多 1–2px。用旋转后的真实尺寸再做一次等比例收缩，
+        # 避免横长/窄长拉手在 30°/45° 等角度越过选区或被边缘裁掉。
+        actual_fit = min(
+            1.0,
+            bw / max(1, resized.width),
+            bh / max(1, resized.height),
+        )
+        if actual_fit < 1.0:
+            resized = resized.resize(
+                (
+                    max(1, int(resized.width * actual_fit)),
+                    max(1, int(resized.height * actual_fit)),
+                ),
+                Image.LANCZOS,
+            )
 
         final_w, final_h = resized.size
 
@@ -406,14 +388,11 @@ def composite():
             shadow_paste_x = paste_x + shadow_offset_x
             shadow_paste_y = paste_y + shadow_offset_y
             if shadow_paste_x < base_img.width and shadow_paste_y < base_img.height:
-                temp = Image.new("RGBA", base_img.size, (0, 0, 0, 0))
-                temp.paste(shadow_img, (shadow_paste_x, shadow_paste_y), shadow_img)
-                base_img = Image.alpha_composite(base_img, temp)
+                # alpha_composite 只使用一次 alpha，保留正确的阴影强度。
+                base_img = alpha_composite_clipped(base_img, shadow_img, shadow_paste_x, shadow_paste_y)
 
         # 5. 合成新拉手
-        temp2 = Image.new("RGBA", base_img.size, (0, 0, 0, 0))
-        temp2.paste(resized, (paste_x, paste_y), resized)
-        base_img = Image.alpha_composite(base_img, temp2)
+        base_img = alpha_composite_clipped(base_img, resized, paste_x, paste_y)
 
     # 转为 RGB 输出
     output = base_img.convert("RGB")

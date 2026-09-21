@@ -4,6 +4,7 @@ import io
 import requests
 import json
 import os
+import sys
 
 # 创建一张模拟柜门图：白色背景 + 两个彩色"拉手"
 cabinet = Image.new("RGBA", (800, 600), (245, 242, 238, 255))
