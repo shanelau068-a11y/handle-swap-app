@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-27",
+  "repository": "handle-swap-app",
+  "defaultBranch": "main",
+  "visibility": "public",
+  "sourceCommit": "f746ef83179fe988ee822018ed66f06c44da1a61",
+  "status": "已通过所列检查",
+  "checks": [
+    {
+      "command": "python -m unittest discover -p test_*.py",
+      "result": "通过",
+      "code": 0
+    }
+  ],
+  "scope": [
+    "本轮以合成图片验证本地HTTP接口和几何约束，没有提交付费云端请求。"
+  ],
+  "syntax": {
+    "javascript": 2,
+    "python": 3,
+    "powershell": 0
+  },
+  "runtime": {
+    "node": "24.12.0",
+    "python": "3.12.14",
+    "os": "Windows"
+  }
+}

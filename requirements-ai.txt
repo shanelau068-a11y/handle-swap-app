@@ -1,0 +1,4 @@
+# Optional cloud image routes, in addition to requirements.txt
+openai>=2,<3
+google-genai>=2,<3
+requests>=2.32,<3
